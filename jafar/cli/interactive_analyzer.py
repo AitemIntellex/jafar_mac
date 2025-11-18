@@ -6,13 +6,10 @@ from rich.panel import Panel
 import os
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-from jafar.utils.news_api import get_news
+from jafar.utils.news_api import get_unified_news
 from jafar.utils.gemini_api import ask_gemini_text_only
 from jafar.cli.telegram_handler import send_long_telegram_message
 from jafar.cli.muxlisa_voice_output_handler import speak_muxlisa_text
-from jafar.utils.news_api import get_news
 
 console = Console()
 
@@ -79,8 +76,8 @@ def start_interactive_analysis(args: str = None):
         logging.info(f"Starting analysis for topic: {topic}")
         console.print(f"🔍 «{topic}» мавзусида энг сўнгги янгиликлар қидирилмоқда...")
         
-        logging.info(f"Fetching news for topic '{topic}' using MarketAux API.")
-        news_data = get_news(symbols="", keywords=[topic], limit=15)
+        logging.info(f"Fetching news for topic '{topic}' using unified news API.")
+        news_data = get_unified_news(instrument=topic, top_n=15)
 
         if "error" in news_data:
             logging.error(f"MarketAux API error: {news_data['error']}")

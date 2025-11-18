@@ -84,3 +84,81 @@ def cancel_order_command(args: str):
 
 def modify_order_command(args: str):
     console.print(f"[yellow]WIP: Ордерни ўзгартириш: {args}[/yellow]")
+
+def place_test_order(args: str):
+    """Places a hardcoded test order to debug the API client."""
+    console.print("[bold yellow]--- API ОРДЕР ТЕСТИ ---[/bold yellow]")
+    try:
+        client = TopstepXClient()
+        account_id = get_primary_account_id(client)
+        if not account_id:
+            return
+
+        console.print(f"Тест учун ҳисоб ID: {account_id}")
+        console.print("Параметрлар: SELL 1 GC @ 4000.0 (Limit, GTC)")
+
+        order_result = client.place_order(
+            contract_id="GC",
+            account_id=account_id,
+            side=1,  # 1 = Sell
+            order_type=0,  # 0 = Limit
+            size=1,
+            limit_price=4000.0
+        )
+
+        if order_result and order_result.get("success"):
+            console.print("[bold green]✅ Тест ордери муваффақиятли жойлаштирилди![/bold green]")
+            from rich import print_json
+            print_json(data=order_result)
+        else:
+            console.print("[bold red]❌ Тест ордерини жойлаштиришда хатолик юз берди.[/bold red]")
+            if order_result:
+                from rich import print_json
+                print_json(data=order_result)
+            else:
+                console.print("[red]API'дан жавоб олинмади.[/red]")
+
+    except Exception as e:
+        console.print(f"[red]Тест ордерини жойлаштиришда кутилмаган хатолик: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+
+def place_market_order_test(args: str):
+    """Places a hardcoded MARKET order to isolate errorCode: 8."""
+    console.print("[bold magenta]--- API МАРКЕТ ОРДЕР ТЕСТИ ---[/bold magenta]")
+    try:
+        client = TopstepXClient()
+        account_id = get_primary_account_id(client)
+        if not account_id:
+            return
+
+        console.print(f"Тест учун ҳисоб ID: {account_id}")
+        console.print("Параметрлар: SELL 1 GC (Market)")
+
+        # Market order учун order_type=2 (API учун ҳам 2)
+        order_result = client.place_order(
+            contract_id="GC",
+            account_id=account_id,
+            side=1,  # 1 = Sell
+            order_type=2,  # 2 = Market
+            size=1
+        )
+
+        if order_result and order_result.get("success"):
+            console.print("[bold green]✅ Тест МАРКЕТ ордери муваффақиятли жойлаштирилди![/bold green]")
+            from rich import print_json
+            print_json(data=order_result)
+        else:
+            console.print("[bold red]❌ Тест МАРКЕТ ордерини жойлаштиришда хатолик юз берди.[/bold red]")
+            if order_result:
+                from rich import print_json
+                print_json(data=order_result)
+            else:
+                console.print("[red]API'дан жавоб олинмади.[/red]")
+
+    except Exception as e:
+        console.print(f"[red]Тест МАРКЕТ ордерини жойлаштиришда кутилмаган хатолик: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+
+

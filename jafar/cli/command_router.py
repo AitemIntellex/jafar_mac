@@ -5,6 +5,7 @@ import traceback
 from datetime import datetime
 import subprocess
 import sys
+import importlib
 
 from rich.console import Console
 from rich.panel import Panel
@@ -14,35 +15,14 @@ console = Console()
 from jafar.utils.assistant_api import ask_assistant
 from jafar.utils.structured_logger import log_action
 from jafar.utils.evolution_engine import analyze_logs, load_stats
-from .ai_handlers import ai_command
-from .chat_handlers import chat_command
-from .check_handlers import check_command
-from .code_handlers import code_command, extract_code_intent, show_code_help
-from .file_handlers import file_command
-from .game_handlers import game_mode_chat
-from .github_handlers import (
-    github_command,
-    github_inspect,
-    next_task,
-    push_project,
-    show_github_issues_and_prs,
-)
 from .intent_router import route_by_intent
 from .print_help import print_help
-from .project_handlers import projects_command
-from .project_run_handler import run_project
-from .agent_handlers import agent_mode_command
-from .pytest_handlers import pytest_command
-from .image_analysis_handler import analyze_screenshot_command
-from .news_handler import process_news_command
-from .atrade_handlers import atrade_command
-from .interactive_analyzer import start_interactive_analysis
-from .order_handlers import list_orders_command, cancel_order_command, modify_order_command
 from .utils import multiline_input
 from ..utils.config_manager import load_config as load_jafar_config, save_config as save_jafar_config
 
 def _activate_safari_and_wait():
     pass
+
 def handle_command(command: str, interactive_session: bool = True):
     if not command or not command.strip():
         return
@@ -58,7 +38,6 @@ def handle_command(command: str, interactive_session: bool = True):
         action = parts[0].lower().lstrip("/")
         args = " ".join(parts[1:])
 
-        # Проверка статистики ошибок перед выполнением команды
         stats = load_stats()
         if action in stats and stats[action]["failure_rate"] > 30:
             rate = stats[action]["failure_rate"]
@@ -71,94 +50,60 @@ def handle_command(command: str, interactive_session: bool = True):
             )
 
         command_handlers = {
-            "ai": ai_command,
-            "chat": chat_command,
-            "gamemode": lambda _: game_mode_chat(),
-            "chatmode": lambda _: chat_mode(),
-            "github": github_command,
-            "code": code_command,
-            "projects": projects_command,
-            "file": file_command,
-            "project": project_command,
-            "pytest": pytest_command,
-            "evolve": lambda _: analyze_logs(),
-            "help": lambda _: print_help(),
-            "-h": lambda _: print_help(),
-            "--help": lambda _: print_help(),
-            "agent-mode": agent_mode_command,
-            "analyze_screenshot": analyze_screenshot_command,
-            "scrn": analyze_screenshot_command,
-            "addscrn": lambda args: run_shell_command_for_screenshots(args),
-            "set_default_screenshot_region": lambda args: set_default_screenshot_region(args),
-            "news": process_news_command,
-            "atrade": atrade_command,
-            "analyze": start_interactive_analysis,
-            "orders": list_orders_command,
-            "order_cancel": cancel_order_command,
-            "order_modify": modify_order_command,
+            "ai": "jafar.cli.ai_handlers.ai_command",
+            "chat": "jafar.cli.chat_handlers.chat_command",
+            "gamemode": "jafar.cli.game_handlers.game_mode_chat",
+            "chatmode": "jafar.cli.command_router.chat_mode",
+            "github": "jafar.cli.github_handlers.github_command",
+            "code": "jafar.cli.code_handlers.code_command",
+            "projects": "jafar.cli.project_handlers.projects_command",
+            "file": "jafar.cli.file_handlers.file_command",
+            "project": "jafar.cli.command_router.project_command",
+            "pytest": "jafar.cli.pytest_handlers.pytest_command",
+            "evolve": "jafar.utils.evolution_engine.analyze_logs",
+            "help": "jafar.cli.print_help.print_help",
+            "-h": "jafar.cli.print_help.print_help",
+            "--help": "jafar.cli.print_help.print_help",
+            "agent-mode": "jafar.cli.agent_handlers.agent_mode_command",
+            "analyze_screenshot": "jafar.cli.image_analysis_handler.analyze_screenshot_command",
+            "scrn": "jafar.cli.image_analysis_handler.analyze_screenshot_command",
+            "addscrn": "jafar.cli.command_router.run_shell_command_for_screenshots",
+            "set_default_screenshot_region": "jafar.cli.command_router.set_default_screenshot_region",
+            "atrade": "jafar.cli.atrade_handlers.atrade_command",
+            "atrade_xapi": "jafar.cli.xapi_handlers.atrade_xapi_command",
+            "atrade_pro": "jafar.cli.atrade_pro_handlers.atrade_pro_command",
+            "analyze": "jafar.cli.interactive_analyzer.start_interactive_analysis",
+            "orders": "jafar.cli.order_handlers.list_orders_command",
+            "order_cancel": "jafar.cli.order_handlers.cancel_order_command",
+            "order_modify": "jafar.cli.order_handlers.modify_order_command",
+            "test_order": "jafar.cli.order_handlers.place_test_order",
+            "test_market": "jafar.cli.order_handlers.place_market_order_test",
+            "test_contract": "jafar.cli.contract_handlers.test_contract_command",
+            "define": "jafar.cli.define_handlers.define_command",
+            "seo": "jafar.cli.seo_handlers.seo_command",
         }
 
-        # --- Добавляем поддержку "run <project>" ---
-        if action == "run" and args:
-            # Универсальная точка: запуск проекта по имени через project_manager
-            from .project_run_handler import run_project as project_run
-
-            project_run(args)
-            status = "success"
-
-        elif action == "tool":
-            from .tool_handlers import tool_command
-
-            tool_command(args)
-            status = "success"
-        elif action == "push" and args:
-            push_project(args)
-            status = "success"
-
-        elif action == "next_task" and args:
-            parts = args.split(" ")
-            project_name = parts[0]
-            task_number = None
-            if len(parts) > 1 and parts[1].isdigit():
-                task_number = int(parts[1])
-            next_task(project_name, task_number=task_number)
-            status = "success"
-
-        elif action == "run":
-            run_project(args.strip())
-            status = "success"
-
-        elif action == "prohub":
-            if args:
-                github_inspect(args)
-                show_github_issues_and_prs(args)
-            else:
-                console.print("[red]Укажи имя проекта: prohub tms_backend[/red]")
-            status = "success"
-        elif action == "mode":
-            from .mode_handlers import mode_command
-
-            mode_command(args)
-            status = "success"
-        elif action == "analyze_screenshot":
-            result = command_handlers[action](args)
-            console.print(
-                Panel(result, title="🤖 Jafar - Анализ скриншота", style="green")
-            )
-            status = "success"
-        elif action in command_handlers:
-            command_handlers[action](args)
+        if action in command_handlers:
+            module_path, func_name = command_handlers[action].rsplit('.', 1)
+            module = importlib.import_module(module_path)
+            func = getattr(module, func_name)
+            func(args)
             status = "success"
         else:
-            code_intent = extract_code_intent(command)
-            if code_intent:
-                subcmd, arguments = code_intent
-                full_code_command = f"{subcmd} {arguments}".strip()
-                code_command(full_code_command)
+            # Fallback logic for other commands
+            if action == "run" and args:
+                from .project_run_handler import run_project as project_run
+                project_run(args)
                 status = "success"
-
-            elif route_by_intent(command):
+            elif action == "tool":
+                from .tool_handlers import tool_command
+                tool_command(args)
                 status = "success"
+            elif action == "push" and args:
+                from .github_handlers import push_project
+                push_project(args)
+                status = "success"
+            # ... (add other specific command handlers here)
             else:
                 ai_response = ask_assistant(command)
                 if isinstance(ai_response, dict):
@@ -173,7 +118,8 @@ def handle_command(command: str, interactive_session: bool = True):
                     message = str(ai_response)
                 console.print(Panel(message, title="🤖 Jafar", style="green"))
                 status = "success"
-    except (ValueError, ImportError, KeyError) as e:
+
+    except (ValueError, ImportError, KeyError, AttributeError) as e:
         error_message = str(e)
         console.print(Panel(f"❌ Ошибка: {e}", title="Исключение", style="bold red"))
         traceback.print_exc()

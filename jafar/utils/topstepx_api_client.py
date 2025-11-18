@@ -74,7 +74,7 @@ class TopstepXClient:
             return True
         return datetime.now() >= self._token_expiry
 
-    def _make_request(self, method: str, endpoint: str, params: dict = None, data: dict = None):
+    def _make_request(self, method: str, endpoint: str, params: dict = None, data: dict = None, tick_size: float = None):
         """Универсальная функция для выполнения запросов к API."""
         if self._is_token_expired():
             console.print("[yellow]Токен доступа истек. Повторная аутентификация...[/yellow]")
@@ -169,53 +169,82 @@ class TopstepXClient:
         }
         return self._make_request("POST", "/History/retrieveBars", data=payload)
 
+    def search_contract(self, name: str):
+        """
+        Ищет контракт по его имени (например, "GC").
+        """
+        console.print(f"[cyan]Поиск контракта по имени '{name}'...[/cyan]")
+        payload = {"searchText": name, "live": False}
+        return self._make_request("POST", "/Contract/search", data=payload)
+
+    def cancel_order(self, account_id: int, order_id: int):
+        """
+        Отменяет активный ордер по его ID.
+        """
+        console.print(f"[cyan]Отмена ордера ID: {order_id} для счета {account_id}...[/cyan]")
+        payload = {"accountId": account_id, "orderId": order_id}
+        return self._make_request("POST", "/Order/cancel", data=payload)
+
     def place_order(self, contract_id: str, account_id: int, side: int, order_type: int, size: int, 
-                    limit_price: float = None, stop_price: float = None, 
+                    tick_size: float, limit_price: float = None, stop_price: float = None, 
                     stop_loss: float = None, take_profit: float = None):
         """
-        Размещает торговый ордер.
+        Размещает торговый ордер согласно официальной документации ProjectX.
         side: 0 = Buy, 1 = Sell
-        order_type: 0 = Limit, 1 = Stop, 2 = Market
+        order_type (internal): 0 = Limit, 1 = Stop, 2 = Market
         """
-        console.print(f"[bold yellow]Размещение ордера: {side} {size} {contract_id} @ {limit_price or stop_price or 'Market'}[/bold yellow]")
+        # --- Маппинг внутренних типов ордеров на типы API ---
+        # API: 1=Limit, 2=Market, 4=Stop
+        type_map = {
+            0: 1, # Наш Limit (0) -> API Limit (1)
+            1: 4, # Наш Stop (1) -> API Stop (4)
+            2: 2, # Наш Market (2) -> API Market (2)
+        }
+        api_order_type = type_map.get(order_type)
+        if api_order_type is None:
+            raise ValueError(f"Неподдерживаемый внутренний тип ордера: {order_type}")
+
+        console.print(f"[bold yellow]Размещение ордера: side={side}, type={api_order_type}, size={size}, contract={contract_id} @ {limit_price or stop_price or 'Market'}[/bold yellow]")
         
         payload = {
             "contractId": contract_id,
             "accountId": account_id,
             "side": side,
-            "type": order_type,
+            "type": api_order_type,
             "size": size,
-            "timeInForce": 0, # 0 = Day
         }
         
-        if limit_price:
+        # 'limitPrice' обязателен для Limit ордеров
+        if api_order_type == 1 and limit_price is not None:
             payload["limitPrice"] = limit_price
-        if stop_price:
+        # 'stopPrice' обязателен для Stop ордеров
+        if api_order_type == 4 and stop_price is not None:
             payload["stopPrice"] = stop_price
             
-        # Добавляем стоп-лосс и тейк-профит, если они указаны (bracket order)
-        if stop_loss or take_profit:
-            payload["legs"] = []
+        # --- НОВАЯ ЛОГИКА BRACKET ORDERS (SL/TP) ---
+        # ВАЖНО: API ожидает SL/TP в ТИКАХ, а не в абсолютной цене.
+        # Используем динамический tick_size
+        
+        entry_price_for_ticks = limit_price if limit_price is not None else stop_price
+        
+        if entry_price_for_ticks:
             if stop_loss:
-                payload["legs"].append({
-                    "contractId": contract_id,
-                    "side": 1 if side == 0 else 0, # Противоположная сторона
-                    "type": 1, # Stop
-                    "size": size,
-                    "stopPrice": stop_loss,
-                    "timeInForce": 1, # 1 = GTC (Good 'til Canceled)
-                })
-            if take_profit:
-                payload["legs"].append({
-                    "contractId": contract_id,
-                    "side": 1 if side == 0 else 0, # Противоположная сторона
-                    "type": 0, # Limit
-                    "size": size,
-                    "limitPrice": take_profit,
-                    "timeInForce": 1, # 1 = GTC
-                })
+                sl_ticks = (stop_loss - entry_price_for_ticks) / tick_size
+                payload["stopLossBracket"] = {
+                    "ticks": int(sl_ticks),
+                    "type": 4 # API требует Stop Market ордер для SL
+                }
+                console.print(f"[cyan]Stop-Loss: {stop_loss} ({int(sl_ticks)} тиков)[/cyan]")
 
-        return self._make_request("POST", "/Order/place", data=payload)
+            if take_profit:
+                tp_ticks = (take_profit - entry_price_for_ticks) / tick_size
+                payload["takeProfitBracket"] = {
+                    "ticks": int(tp_ticks),
+                    "type": 1 # Limit order
+                }
+                console.print(f"[cyan]Take-Profit: {take_profit} ({int(tp_ticks)} тиков)[/cyan]")
+
+        return self._make_request("POST", "/Order/place", data=payload, tick_size=tick_size)
 
 # --- Тестовый запуск ---
 if __name__ == "__main__":

@@ -6,7 +6,6 @@ __pycache__/
 
 # Environment variables
 .env
-.env.*
 
 # Operating System
 .DS_Store
@@ -29,3 +28,6 @@ temp/
 # Archives
 *.zip
 *.tar.gz
+
+# JSON files (to prevent accidental commit of credentials or sensitive data)
+*.json
