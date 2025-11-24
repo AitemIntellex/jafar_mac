@@ -20,7 +20,7 @@ console = Console()
 KEY_LEVELS_FILE = Path("memory/key_levels.json")
 TOPSTEPX_USERNAME = os.getenv("TOPSTEPX_USERNAME")
 TOPSTEPX_API_KEY = os.getenv("TOPSTEPX_API_KEY")
-MONITOR_INTERVAL_SECONDS = 15 # How often to check prices
+MONITOR_INTERVAL_SECONDS = 90 # How often to check prices
 PRICE_THRESHOLD_PERCENT = 0.05 # Price proximity to level, in percent
 
 APPLE_SCRIPT_ACTIVATE_TOPSTEPX = Path(__file__).parent / "scripts" / "activate_topstepx.scpt"
@@ -132,8 +132,9 @@ def super_agent_loop():
             # For now, we prioritize Level Guardian if no specific position management logic is here.
 
             # --- Prioritet #2: Yangi savdo imkoniyatlarini izlash ("Level Guardian") ---
+            console.print(f"[{datetime.now().strftime('%H:%M:%S')}] [dim]Супер Агент: Нарх даражаларини текшириш... ({', '.join(monitored_instruments)})[/dim]")
             current_prices = get_current_prices(client, monitored_instruments)
-            console.print(f"[dim]Joriy narxlar: {current_prices}[/dim]")
+            # console.print(f"[dim]Joriy narxlar: {current_prices}[/dim]")
 
             for instrument, levels in key_levels_data.items():
                 current_price = current_prices.get(instrument)

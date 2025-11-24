@@ -1,152 +1,100 @@
 import os
-import platform
 import getpass
-import socket
 import traceback
 from datetime import datetime
 import sys
+import random
+from pathlib import Path
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
+from rich.columns import Columns
 from rich.table import Table
-from rich.markdown import Markdown
+from rich.text import Text
+from rich.markup import escape
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.formatted_text import HTML
 
-from jafar.utils.ai_watcher import observe_and_respond
-import sys
-import os
-
-# Add the 'src' directory to the Python path
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-sys.path.insert(0, project_root)
-
 from jafar.cli.command_router import handle_command
-from jafar.cli.game_handlers import game_mode_chat
-from jafar.utils.readme_logger import log_to_readme
-
-from jafar.utils.github_api import list_issues
-from jafar.utils.project_manager.manager import load_config
+from jafar.utils.market_utils import get_current_trading_session
+from jafar.cli.telegram_handler import send_long_telegram_message
 
 console = Console()
-HISTORY_FILE = os.path.expanduser("~/.jafar/jafar_history.txt")
+HISTORY_FILE = os.path.expanduser("~/.jafar_history.txt")
+PID_FILE = Path("/Users/macbook/.gemini/tmp/super_agent.pid")
 
-
-def print_banner():
-    md = Markdown(
-        f"""# 🚀 Jafar AI Terminal 🚀
-
-## 🤖 Ваш интеллектуальный ассистент
-
-**Время запуска:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-**Версия Python:** {platform.python_version()}
-
---- 
-
-*   **Готов к работе!**
-*   **Введите `help` для списка команд.**
+JAFAR_ASCII_ART = """
+██╗ █████╗ ███████╗ █████╗ ██████╗ 
+██║██╔══██╗██╔════╝██╔══██╗██╔══██╗
+██║███████║█████╗  ███████║██████╔╝
+██║██╔══██║██╔╝  ██╔══██║██╔══██╗
+██║██║  ██║███████╗██║  ██║██║  ██║
+╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝
 """
-    )
-    console.print(Panel(md, style="bold green", border_style="bright_cyan"))
 
+TRADING_QUOTES = [
+    "Фонд бозори — сабрсизлардан сабрлиларга пул ўтказиш учун яратилган қурилмадир. - Уоррен Баффетт",
+    "Тренд — бу сенинг дўстинг, то у эгилгунча. - Эд Сейкота",
+    "Инвестициядаги энг хавфли тўрт сўз: 'Бу сафар бошқача бўлади.' - Сэр Жон Темплтон",
+    "Муваффақиятли трейдернинг мақсади — энг яхши савдоларни амалга ошириш. Пул иккинчи даражали. - Александр Элдер"
+]
+
+def get_super_agent_status():
+    """Checks if the Super Agent is running and returns a colored Text object."""
+    if not PID_FILE.exists():
+        return Text("🔴 Тўхтатилган", style="bold red")
+    try:
+        with open(PID_FILE, "r") as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)
+        return Text(f"🟢 Ишламоқда (PID: {pid})", style="bold green")
+    except (IOError, ValueError, OSError):
+        return Text("🟡 Номаълум", style="bold yellow")
+
+def display_welcome_banner():
+    """Displays a stylized, colored 'Launch Dashboard'."""
+    
+    # Left Column: ASCII Art
+    ascii_art = Text(JAFAR_ASCII_ART, style="bold magenta")
+
+    # Right Column: Status Panel
+    status_table = Table.grid(padding=(0, 2))
+    status_table.add_column(style="dim cyan", justify="right")
+    status_table.add_column(style="bold white")
+    status_table.add_row("Вақт:", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    status_table.add_row("Савдо Сессияси:", get_current_trading_session())
+    status_table.add_row("Фойдаланувчи:", getpass.getuser())
+    status_table.add_row("Супер Агент:", get_super_agent_status())
+    
+    status_panel = Panel(status_table, title="СТАТУС", border_style="cyan", expand=False)
+
+    # Main layout with two columns
+    columns = Columns([ascii_art, status_panel], equal=True, expand=True)
+
+    # Quote below the columns
+    chosen_quote = random.choice(TRADING_QUOTES)
+    quote_text = Text(f'\n"{chosen_quote}"', style="italic yellow", justify="center")
+
+    # Send quote to Telegram
+    send_long_telegram_message(f"**Кун Цитатаси:**\n\n_{chosen_quote}_")
+
+    # Group everything together
+    main_renderable = Group(columns, quote_text)
+
+    # Print in a final Panel
+    console.print(Panel(
+        main_renderable,
+        title="Jafar AI Савдо Ассистенти",
+        border_style="bold green",
+        padding=(1, 2)
+    ))
 
 def jafar_prompt():
-    user = getpass.getuser()
-    host = socket.gethostname().split(".")[0]
-    cwd = os.path.basename(os.getcwd())
-    return HTML(
-        f"<ansisilver>{user}</ansisilver>"
-        f"@<ansicyan>{host}</ansicyan> "
-        f"<ansigreen>{cwd}</ansigreen> "
-        f"<ansiblack></ansiblack> "
-        f"<ansiblue>jafar</ansiblue> <white>❯</white> "
-    )
-
-
-def show_jafar_status():
-    table = Table(title="🧠 Jafar Status Overview", style="cyan", expand=True)
-    table.add_column("Parameter/Параметр")
-    table.add_column("Value/Значение")
-    table.add_row("OS", platform.system())
-    table.add_row("User", getpass.getuser())
-    table.add_row("Machine", socket.gethostname())
-    table.add_row("Python", platform.python_version())
-    table.add_row("Working Dir", os.getcwd())
-    table.add_row("Active Project", get_active_project())
-    table.add_row("Mode", "CLI-ready")
-    table.add_row("AI Thread", "✓ loaded")
-    console.print(table)
-
-
-def get_active_project():
-    cwd = os.getcwd()
-    config = load_config() or {}
-    parts = cwd.split(os.sep)
-    for part in reversed(parts):
-        if part in config:
-            return part
-    return "jafar_v2"
-
-
-def show_project_tasks(project_name=None):
-    config = load_config() or {}
-    if not config:
-        console.print(Panel("Конфиг проектов не найден.", style="red"))
-        return
-
-    name = project_name or get_active_project()
-    project_info = config.get(name)
-    if not project_info:
-        console.print(Panel(f"Проект '{name}' не найден в config.", style="yellow"))
-        return
-
-    owner = project_info.get("owner")
-    repo = project_info.get("repo")
-
-    if not owner or not repo:
-        console.print(
-            Panel(f"В конфиге для '{name}' отсутствуют owner/repo.", style="red")
-        )
-        return
-
-    issues = list_issues(owner, repo)
-    if not issues or (isinstance(issues, dict) and issues.get("message")):
-        console.print(Panel("Нет открытых задач или ошибка API.", style="yellow"))
-        return
-
-    table = Table(title=f"GitHub Issues for {name}", style="magenta", expand=True)
-    table.add_column("#")
-    table.add_column("Title")
-    table.add_column("Status")
-    for issue in issues:
-        table.add_row(
-            str(issue.get("number", "")), issue.get("title", ""), issue.get("state", "")
-        )
-    console.print(table)
-
-
-def show_mock_tasks():
-    md = Markdown(
-        """
-**📋 Tasks from neighbor project**
-
-- [ ] Подключить pre-commit в tms_backend
-- [ ] Настроить Celery + Redis в TradeSpace
-- [ ] Проверить структуру game_handlers.py
-- [ ] Сделать граф auto-evolution
-        """
-    )
-    panel = Panel(
-        md,
-        title="🚧 Project Tasks Snapshot (Mock)",
-        style="bright_cyan",
-    )
-    console.print(panel)
-
+    """Returns a simplified and clean prompt."""
+    return HTML("<bold><ansiblue>(jafar)</ansiblue> <ansiwhite>❯</ansiwhite></bold> ")
 
 def main():
-    command = ""
     try:
         os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
 
@@ -156,13 +104,10 @@ def main():
             return
 
         if not sys.stdout.isatty():
-            console.print(Panel("[bold yellow]Non-interactive mode detected.[/bold yellow]", title="Jafar CLI"))
             return
 
         session = PromptSession(history=FileHistory(HISTORY_FILE))
-        print_banner()
-        show_jafar_status()
-        log_to_readme("запуск CLI", "Jafar готов к работе")
+        display_welcome_banner()
 
         while True:
             try:
@@ -171,31 +116,16 @@ def main():
                     continue
                 handle_command(command, interactive_session=True)
 
-                response = observe_and_respond(command)
-                if response:
-                    console.print(
-                        Panel(
-                            f"🦉 [bold green]Advice:[/bold green] {response}",
-                            style="blue",
-                        )
-                    )
-                    log_to_readme(
-                        "рекомендация", f"Совет по команде '{command}'", response
-                    )
-
             except (KeyboardInterrupt, EOFError):
-                console.print("\n👋 See you!")
-                log_to_readme("exit", "Jafar completed Cli")
+                console.print("\n👋 Хайр!")
                 break
             except Exception as e:
-                console.print(f"[red]❌ Error: {e}[/red]")
+                console.print(f"[red]❌ Хатолик: {escape(str(e))}[/red]")
                 traceback.print_exc()
-                log_to_readme("error", f"Ошибка в команде '{command}'", str(e))
 
     except Exception as e:
-        console.print(f"[red]❌ Ошибка при старте: {e}[/red]")
+        console.print(f"[red]❌ Jafar'ни ишга туширишда хатолик: {escape(str(e))}[/red]")
         traceback.print_exc()
-        log_to_readme("ошибка запуска", "Ошибка при запуске CLI", str(e))
 
 def run_jafar():
     main()

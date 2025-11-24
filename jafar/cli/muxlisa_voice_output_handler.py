@@ -85,3 +85,37 @@ def speak_muxlisa_text(text: str):
         # 4. Удаляем временный файл
         if os.path.exists(TEMP_AUDIO_FILE):
             os.remove(TEMP_AUDIO_FILE)
+
+import re
+import nltk
+
+# Убедимся, что необходимый пакет для NLTK загружен
+try:
+    nltk.data.find('tokenizers/punkt')
+    nltk.data.find('tokenizers/punkt_tab')
+except LookupError:
+    print("Загрузка недостающих пакетов ('punkt', 'punkt_tab') для NLTK...")
+    nltk.download('punkt')
+    nltk.download('punkt_tab')
+
+def speak_in_chunks(text: str, chunk_size: int = 250):
+    """
+    Разбивает текст на предложения и озвучивает их по очереди.
+    """
+    if not text.strip():
+        return
+
+    # Заменяем распространенные сокращения, чтобы NLTK не спотыкался
+    text = re.sub(r'долл\.', 'долларов', text, flags=re.IGNORECASE)
+    text = re.sub(r'млрд\.', 'миллиардов', text, flags=re.IGNORECASE)
+    text = re.sub(r'млн\.', 'миллионов', text, flags=re.IGNORECASE)
+
+    # Разбиваем текст на предложения
+    sentences = nltk.sent_tokenize(text)
+
+    # Озвучиваем каждое предложение
+    for sentence in sentences:
+        if sentence.strip():
+            print(f"Озвучиваю: {sentence}")
+            speak_muxlisa_text(sentence)
+            time.sleep(0.3) # Небольшая пауза между предложениями

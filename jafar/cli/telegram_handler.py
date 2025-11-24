@@ -57,21 +57,23 @@ def send_telegram_message(message: str, parse_mode: str = "MarkdownV2"):
         data["parse_mode"] = parse_mode
 
     try:
-
-        response = requests.post(url, data=data)
-        response_json = response.json() # Получаем ответ от API
+        response = requests.post(url, data=data, timeout=10) # Added timeout
         response.raise_for_status()
+        response_json = response.json()
 
         if response_json.get("ok"):
-            console.print("[bold green]✅ Сообщение успешно отправлено в Telegram![/bold green]")
+            # Don't print success message to avoid cluttering the CLI
+            pass
         else:
             error_description = response_json.get("description")
-            console.print(f"[bold red]❌ Ошибка от Telegram API: {error_description}[/bold red]")
+            console.print(f"[bold red]❌ Telegram API хатоси: {error_description}[/bold red]")
 
+    except requests.exceptions.SSLError as e:
+        console.print(f"[bold yellow]⚠️ Telegram'га юборишда SSL хатоси (тармоқ блокланган бўлиши мумкин): {e}[/bold yellow]")
     except requests.exceptions.RequestException as e:
-        console.print(f"[bold red]❌ Ошибка сети при отправке сообщения: {e}[/bold red]")
+        console.print(f"[bold yellow]⚠️ Telegram'га юборишда тармоқ хатоси: {e}[/bold yellow]")
     except Exception as e:
-        console.print(f"[bold red]❌ Произошла непредвиденная ошибка: {e}[/bold red]")
+        console.print(f"[bold red]❌ Telegram'га юборишда кутилмаган хатолик: {e}[/bold red]")
 
 def send_telegram_photo(photo_path: str, caption: str = None, parse_mode: str = "MarkdownV2"):
     """

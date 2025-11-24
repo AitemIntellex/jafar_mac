@@ -3,6 +3,8 @@ import time
 from pathlib import Path
 from datetime import datetime, timedelta
 from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 from rich import print_json
 from PIL import Image
 import io
@@ -20,7 +22,7 @@ from jafar.utils.topstepx_api_client import TopstepXClient
 from .telegram_handler import send_long_telegram_message
 from .economic_calendar_fetcher import fetch_economic_calendar_data
 from jafar.utils.market_utils import get_current_trading_session
-from .muxlisa_voice_output_handler import speak_muxlisa_text
+from .muxlisa_voice_output_handler import speak_muxlisa_text, speak_in_chunks
 from jafar.utils.text_utils import convert_numbers_to_words_in_text
 
 console = Console()
@@ -170,7 +172,7 @@ def start_escort_agent(order_id: int, account_id: int, contract_id: str, expecte
     try:
         subprocess.Popen(command, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         console.print(f"[green]✅ Order #{order_id} uchun agent muvaffaqiyatli ishga tushirildi.[/green]")
-        speak_muxlisa_text(f"Agent {order_id} uchun ishga tushirildi.")
+        speak_muxlisa_text("Agent 001 ishga tushirildi.")
     except Exception as e:
         console.print(f"[red]❌ Fon agentini ishga tushirib bo'lmadi: {e}[/red]")
         send_long_telegram_message(f"🚨 **CRITICAL: Agent Start Failed**\nOrder ID: #{order_id}\nError: {e}")
@@ -189,6 +191,30 @@ def handle_order_result(order_result, account_id, contract_id, expected_side, or
         # Запускаем агент только для Limit и Stop ордеров, которые требуют ожидания
         if order_id and order_type in [1, 4]: # 1=Limit, 4=Stop
             start_escort_agent(order_id, account_id, contract_id, expected_side)
+
+def _extract_and_parse_json(raw_text: str) -> dict:
+    """Finds and parses a JSON block from a raw string, with improved robustness."""
+    # 1. Try to find a ```json block
+    json_code_block_match = re.search(r'```json\n({.*?})\n```', raw_text, re.DOTALL)
+    if json_code_block_match:
+        try:
+            return json.loads(json_code_block_match.group(1))
+        except json.JSONDecodeError as e:
+            console.print(f"[dim yellow]JSON в кодовом блоке невалиден: {e}[/dim yellow]")
+
+    # 2. Try to find the outermost JSON object
+    outer_json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+    if outer_json_match:
+        try:
+            return json.loads(outer_json_match.group(0))
+        except json.JSONDecodeError as e:
+            console.print(f"[dim yellow]Внешний JSON-объект невалиден: {e}[/dim yellow]")
+
+    # 3. Fallback: try parsing the whole raw_text as JSON
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Не удалось распарсить JSON из ответа: {e}") from e
 
 def run_ctrade_analysis(instrument_query: str, contract_symbol: str, screenshot_files: list[str]) -> dict:
     client = TopstepXClient()
@@ -221,40 +247,101 @@ def run_ctrade_analysis(instrument_query: str, contract_symbol: str, screenshot_
         prompt = f"**MODE: OPEN POSITION MANAGEMENT**..." # Simplified for brevity
     else:
         prompt = f'''
-        **MODE: NEW TRADE SEARCH**
-        Instrument: {instrument_query}.
-        **Current Trading Session:** {current_session}
-        **DATA:**
-        - Account Data: ```{topstepx_data}```
-        - News: ```{news_results}```
-        - Calendar: ```{economic_calendar_data}```
-        **TASK:**
-        1.  **Analyze:** Based on all data, determine trend, sentiment, key levels, and forecast confidence (A, B, C).
-        2.  **Propose Risk:** Based on forecast confidence, propose a risk percentage (2% to 20%).
-        3.  **Formulate Plan:** Formulate the primary trading plan. **`order_type` MUST be "LIMIT" or "STOP"**.
-        4.  **Generate Uzbek Cyrillic Analysis:** Create `full_analysis_uzbek_cyrillic`. Format it beautifully with markdown.
-        5.  **Generate Uzbek Latin Voice Summary:** Create `voice_summary_uzbek_latin`. It must be a concise, natural summary in UZBEK (LATIN) for voice output.
-        **OUTPUT FORMAT (STRICTLY JSON):**
+        **TOIFA:** Savdo tahlili va reja tuzish.
+        **MAQSAD:** Taqdim etilgan barcha ma'lumotlar (skrinshotlar, hisob holati, yangiliklar, kalendar) asosida `{instrument_query}` uchun savdo rejasini ishlab chiqish.
+
+        **KIRISH MA'LUMOTLARI:**
+        - **Instrument:** {instrument_query}
+        - **Joriy sessiya:** {current_session}
+        - **Hisob holati:** ```{topstepx_data}```
+        - **Yangiliklar lentasi:** ```{news_results}```
+        - **Iqtisodiy kalendar:** ```{economic_calendar_data}```
+
+        **TOPSHIRIQ:**
+        Barcha ma'lumotlarni kompleks tahlil qilib, quyidagi formatda YAGONA va TO'LIQ JSON obyektini qaytar.
+
+        **CHIQISH FORMATI (FAQAT JSON):**
         ```json
         {{
-          "full_analysis_uzbek_cyrillic": "...",
+          "full_analysis_uzbek_cyrillic": "Bu yerda to'liq, batafsil va chiroyli formatlangan tahlil matni bo'lishi kerak. Trend, sentiment, asosiy narx darajalari va prognozning ishonchliligi (A, B, C) kabi barcha jihatlarni o'z ichiga olsin.",
           "trade_data": {{
-            "action": "BUY", "forecast_strength": "B", "risk_percent": 5.0,
-            "order_type": "LIMIT", "entry_price": 2350.5, "stop_loss": 2335.0,
-            "take_profits": {{ "tp1": 2365.0, "tp2": 2380.0 }}
+            "action": "BUY",
+            "forecast_strength": "B",
+            "risk_percent": 5.0,
+            "order_type": "LIMIT",
+            "entry_price": 2350.5,
+            "stop_loss": 2335.0,
+            "take_profits": {{
+              "tp1": 2365.0,
+              "tp2": 2380.0
+            }}
           }},
-          "voice_summary_uzbek_latin": "..."
+          "voice_summary_uzbek_latin": "Bu yerda ovozli yordamchi uchun qisqa, aniq va tabiiy eshitiladigan o'zbek (lotin) tilidagi xulosa bo'lishi kerak."
         }}
         ```
+        **ДИҚҚАТ:** Жавоб ФАҚАТ ва ФАҚАТ JSON форматида бўлиши шарт. Ҳеч қандай изоҳларсиз.
         '''
 
     raw_response = ask_gemini_with_image(prompt, image_objects)
+    
+    analysis_data = None
+    error_message = ""
+
+    # Attempt 1: Parse the initial response
     try:
-        json_match = re.search(r'```json\n({.*?})\n```', raw_response, re.DOTALL) or re.search(r'({.*?})', raw_response, re.DOTALL)
-        if not json_match: raise ValueError("No JSON block found")
-        analysis_data = json.loads(json_match.group(1))
+        analysis_data = _extract_and_parse_json(raw_response)
     except (json.JSONDecodeError, ValueError) as e:
-        return {"status": "Ошибка", "full_analysis": f"Xatolik: Gemini javobi yaroqli JSON formatida emas: {e}\nResponse: {raw_response}"}
+        error_message = f"Биринчи уринишда хато: {e}. Жавоб: {raw_response}"
+        console.print(f"[yellow]⚠️ Gemini жавобида JSON формати аниқланмади. Қайта сўров юборилмоқда...[/yellow]")
+        console.print(Panel(
+            raw_response, 
+            title="[dim red]Сырой ответ Gemini (попытка 1)[/dim red]", 
+            border_style="dim red", 
+            expand=True
+        ))
+        with open(TEMP_RAW_RESPONSE_FILE, "w", encoding="utf-8") as f:
+            f.write(raw_response)
+        console.print(f"[dim]Сырой ответ сохранен в {TEMP_RAW_RESPONSE_FILE}[/dim]")
+        if isinstance(e, json.JSONDecodeError):
+            console.print(f"[dim red]JSONDecodeError: {e.msg} at doc pos {e.pos}[/dim red]")
+        speak_muxlisa_text("Жеймини жавоби тушунарсиз. Қайта сўров юборилмоқда.")
+
+        # Attempt 2: Self-correction prompt
+        correction_prompt = f"""
+        Менга юборган жавобингни қайта кўриб чиқ. Унда яроқли JSON формати мавжуд эмас. 
+        Менга фақат ва фақат яроқли JSON жавобини қайтар, ҳеч қандай изоҳларсиз. 
+        Мана олдинги жавобинг:
+        ```
+        {raw_response}
+        ```
+        Фақат JSON жавобини қайтар:
+        """
+        
+        # Send correction prompt (without images, just text)
+        correction_response = ask_gemini_with_image(correction_prompt, []) # Pass empty list for images
+        
+        try:
+            analysis_data = _extract_and_parse_json(correction_response)
+        except (json.JSONDecodeError, ValueError) as e:
+            error_message = f"Иккинчи уринишда хато: {e}. Жавоб: {correction_response}"
+            console.print(f"[red]❌ Gemini жавобини икки марта тузатишга уриниш муваффақиятсиз якунланди.[/red]")
+            console.print(Panel(
+                correction_response, 
+                title="[dim red]Сырой ответ Gemini (попытка 2)[/dim red]", 
+                border_style="dim red", 
+                expand=True
+            ))
+            with open(TEMP_RAW_RESPONSE_FILE, "a", encoding="utf-8") as f: # Append to file
+                f.write("\n\n--- Попытка 2 ---\n\n")
+                f.write(correction_response)
+            console.print(f"[dim]Сырой ответ (попытка 2) добавлен в {TEMP_RAW_RESPONSE_FILE}[/dim]")
+            if isinstance(e, json.JSONDecodeError):
+                console.print(f"[dim red]JSONDecodeError: {e.msg} at doc pos {e.pos}[/dim red]")
+            speak_muxlisa_text("Жеймини жавоби икки марта тузатилмади. Хатолик.")
+            return {"status": "Ошибка", "full_analysis": f"Xatolik: Gemini жавоби яроқли JSON форматида эмас (икки марта): {error_message}"}
+
+    if not analysis_data:
+         return {"status": "Ошибка", "full_analysis": f"Xatolik: Gemini жавобидан таҳлил маълумотларини олиб бўлмади: {error_message}"}
 
     if trade_data := analysis_data.get("trade_data"):
         # Save the discovered levels to memory for the Super Agent
@@ -302,25 +389,15 @@ def run_ctrade_analysis(instrument_query: str, contract_symbol: str, screenshot_
 
     send_long_telegram_message(f"BTRADE TAHLILI ({instrument_query}):\n\n{analysis_data.get('full_analysis_uzbek_cyrillic', 'N/A')}")
     
+    # Also return trade_data so ctrade_command can display it in a table
+    trade_data = analysis_data.get("trade_data")
+
     return {
         "status": "Успех",
         "full_analysis": analysis_data.get("full_analysis_uzbek_cyrillic", "Tahlil taqdim etilmagan."),
-        "voice_summary": analysis_data.get("voice_summary_uzbek_latin")
+        "voice_summary": analysis_data.get("voice_summary_uzbek_latin"),
+        "trade_data": trade_data
     }
-
-def speak_in_chunks(text: str, max_chunk_size: int = 500):
-    if not text: return
-    sentences = re.split(r'(?<=[.!?])\s+', text.replace('\n', ' '))
-    current_chunk = ""
-    for sentence in sentences:
-        if not sentence: continue
-        if len(current_chunk) + len(sentence) + 1 > max_chunk_size:
-            speak_muxlisa_text(current_chunk.strip())
-            current_chunk = sentence + " "
-        else:
-            current_chunk += sentence + " "
-    if current_chunk.strip():
-        speak_muxlisa_text(current_chunk.strip())
 
 def ctrade_command(args: str = None):
     instrument_map = {"gold": "MGC", "mgc": "MGC", "oltin": "MGC", "zoloto": "MGC", "gc": "GC", "oil": "CL", "cl": "CL", "neft": "CL", "s&p": "ES", "es": "ES"}
@@ -328,11 +405,11 @@ def ctrade_command(args: str = None):
     if args:
         instrument_query = shlex.split(args)[0].lower()
     if not instrument_query:
-        instrument_query = console.input("[bold yellow]Instrument (masalan, oltin): [/bold yellow]").lower()
+        instrument_query = console.input("[bold yellow]Инструмент (масалан, oltin): [/bold yellow]").lower()
     if not (contract_symbol := instrument_map.get(instrument_query)):
-        console.print(f"[red]'{instrument_query}' uchun tiker topilmadi.[/red]"); return
+        console.print(f"[red]'{instrument_query}' учун тикер топилмади.[/red]"); return
 
-    console.print(f"[cyan]Tahlil qilinmoqda: {instrument_query.capitalize()} ({contract_symbol})[/cyan]")
+    console.print(f"[cyan]Таҳлил қилинмоқда: {instrument_query.capitalize()} ({contract_symbol})[/cyan]")
     
     screenshot_files = []
     current_batch_dir = SCREENSHOT_DIR / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -340,14 +417,60 @@ def ctrade_command(args: str = None):
     for i in range(3):
         time.sleep(3)
         path = current_batch_dir / f"screenshot_{i + 1}.png"
+        # Using -i for interactive mode to avoid window selection issues in some cases
         os.system(f'screencapture -w "{str(path)}"')
-        screenshot_files.append(str(path))
+        if path.exists() and path.stat().st_size > 0:
+            screenshot_files.append(str(path))
+        else:
+            console.print(f"[red]Скриншот #{i+1} олинмади. Таҳлил бекор қилинди.[/red]")
+            return
+            
+    if len(screenshot_files) < 3:
+        console.print("[red]Барча скриншотлар олинмади. Таҳлил тўхтатилди.[/red]")
+        return
 
     analysis_result = run_ctrade_analysis(instrument_query, contract_symbol, screenshot_files)
+    
     if analysis_result.get("status") == "Успех":
-        console.print(f"\n[bold green]--- To'liq Tahlil (Kirillcha) ---[/bold green]\n{analysis_result.get('full_analysis', 'Mavjud emas.')}")
+        # Separate full analysis from the rest of the data
+        full_analysis_text = analysis_result.get('full_analysis', 'Мавжуд эмас.')
+        
+        # Display full analysis in a Panel for proper wrapping
+        console.print(Panel(
+            full_analysis_text,
+            title="[bold green]Тўлиқ Таҳлил (Кириллча)[/bold green]",
+            border_style="green",
+            expand=True
+        ))
+        
+        # Display key trade data in a structured table if available
+        if trade_data := analysis_result.get("trade_data"):
+            trade_table = Table(title="[bold blue]Савдо Режаси[/bold blue]", show_header=True, header_style="bold blue")
+            trade_table.add_column("Параметр", style="cyan")
+            trade_table.add_column("Қиймат", style="white")
+
+            color = "green" if trade_data.get('action') == 'BUY' else "red"
+            action_text = trade_data.get('action', 'N/A')
+            trade_table.add_row("Ҳаракат", f"[{color}]{action_text}[/{color}]")
+
+            trade_table.add_row("Кириш Нархи", str(trade_data.get('entry_price', 'N/A')))
+            trade_table.add_row("Стоп Лосс", str(trade_data.get('stop_loss', 'N/A')))
+            
+            tps = trade_data.get('take_profits', {})
+            if tps:
+                for i, (tp_name, tp_level) in enumerate(tps.items()):
+                    trade_table.add_row(f"Тейк Профит {i+1}", str(tp_level))
+            
+            console.print(trade_table)
+
+        # Handle voice summary
         if voice_summary := analysis_result.get("voice_summary"):
             processed_summary = convert_numbers_to_words_in_text(voice_summary)
             speak_in_chunks(processed_summary)
+            
     else:
-        console.print(f"\n[bold red]--- Tahlilda Xatolik ---[/bold red]\n{analysis_result.get('full_analysis', 'Noma`lum xatolik.')}")
+        console.print(Panel(
+            analysis_result.get('full_analysis', 'Номаълум хатолик.'),
+            title="[bold red]Таҳлилда Хатолик[/bold red]",
+            border_style="red"
+        ))
